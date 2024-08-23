@@ -34,7 +34,11 @@ func (s *EtcdServer) DispatchPlan(plan *domain.Plan) (*schedulepb.Evaluation, er
 		err := s.failPlanForNoSlot(plan)
 		return nil, err
 	}
-	job, err := s.createJobByPeriodic(plan, constant.JobStatusPending, "")
+	jobInitStatus := constant.JobStatusPending
+	if plan.Synchronous {
+		jobInitStatus = constant.JobStatusComplete
+	}
+	job, err := s.createJobByPeriodic(plan, jobInitStatus, "")
 	if err != nil {
 		return nil, err
 	}
