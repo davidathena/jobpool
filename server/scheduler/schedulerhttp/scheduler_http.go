@@ -34,7 +34,7 @@ var (
 	PlanAllocationAddPrefix  = "/schedule/plans/allocations/add"
 	QueueDetailPrefix        = "/schedule/queues/detail"
 	QueueJobViewDetailPrefix = "/schedule/queues/job/view/detail"
-	applyTimeout             = time.Second
+	applyTimeout             = 5 * time.Second
 	ErrLeaseHTTPTimeout      = errors.New("waiting for node to catch up its applied index has timed out")
 	ErrScheduleNotFound      = errors.New("scheduler http not found")
 )

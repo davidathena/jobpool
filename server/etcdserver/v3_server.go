@@ -959,9 +959,9 @@ func (s *EtcdServer) EvalAdd(ctx context.Context, r *pb.ScheduleEvalAddRequest) 
 	// 队列相关逻辑放这里
 	eval := convertEvalFromRequest(r)
 	if s.isLeader() {
-		if err := s.waitAppliedIndex(); err != nil {
-			return nil, err
-		}
+		//if err := s.waitAppliedIndex(); err != nil {
+		//	return nil, err
+		//}
 		resp, err := s.queueOperator.EvalBrokerQueue(eval)
 		if err != nil {
 			return nil, err
@@ -1016,9 +1016,9 @@ func (s *EtcdServer) EvalUpdate(ctx context.Context, r *pb.ScheduleEvalStatusUpd
 	// 队列相关逻辑放这里
 	eval := domain.ConvertEvaluationFromPb(resp.(*pb.ScheduleEvalStatusUpdateResponse).Data)
 	if s.isLeader() {
-		if err := s.waitAppliedIndex(); err != nil {
-			return nil, err
-		}
+		//if err := s.waitAppliedIndex(); err != nil {
+		//	return nil, err
+		//}
 		_, err := s.queueOperator.EvalBrokerQueue(eval)
 		if err != nil {
 			return nil, err
@@ -1173,9 +1173,9 @@ func (s *EtcdServer) SimpleAllocationList(ctx context.Context, r *pb.ScheduleAll
 
 func (s *EtcdServer) EvalDequeue(ctx context.Context, r *pb.ScheduleEvalDequeueRequest, opts ...grpc.CallOption) (*pb.ScheduleEvalDequeueResponse, error) {
 	if s.isLeader() {
-		if err := s.waitAppliedIndex(); err != nil {
-			return nil, err
-		}
+		//if err := s.waitAppliedIndex(); err != nil {
+		//	return nil, err
+		//}
 		resp, err := s.queueOperator.EvalBrokerDequeue(r)
 		if err != nil {
 			return nil, err
@@ -1216,9 +1216,9 @@ func (s *EtcdServer) EvalDequeue(ctx context.Context, r *pb.ScheduleEvalDequeueR
 // ack require from queue
 func (s *EtcdServer) EvalAck(ctx context.Context, r *pb.ScheduleEvalAckRequest, opts ...grpc.CallOption) (*pb.ScheduleEvalAckResponse, error) {
 	if s.isLeader() {
-		if err := s.waitAppliedIndex(); err != nil {
-			return nil, err
-		}
+		//if err := s.waitAppliedIndex(); err != nil {
+		//	return nil, err
+		//}
 		if err := s.queueOperator.EvalBrokerAck(r.Id, r.Token); err != nil {
 			return nil, err
 		}
@@ -1256,9 +1256,9 @@ func (s *EtcdServer) EvalAck(ctx context.Context, r *pb.ScheduleEvalAckRequest, 
 
 func (s *EtcdServer) EvalNack(ctx context.Context, r *pb.ScheduleEvalNackRequest, opts ...grpc.CallOption) (*pb.ScheduleEvalNackResponse, error) {
 	if s.isLeader() {
-		if err := s.waitAppliedIndex(); err != nil {
-			return nil, err
-		}
+		//if err := s.waitAppliedIndex(); err != nil {
+		//	return nil, err
+		//}
 		if err := s.queueOperator.EvalBrokerNack(r.Id, r.Token); err != nil {
 			return nil, err
 		}
@@ -1393,9 +1393,9 @@ func (s *EtcdServer) NodeDetail(ctx context.Context, r *pb.NodeDetailRequest, op
 // 仅仅入队列
 func (s *EtcdServer) PlanAllocationEnqueue(ctx context.Context, r *pb.PlanAllocationEnqueueRequest, opts ...grpc.CallOption) (*pb.PlanAllocationEnqueueResponse, error) {
 	if s.isLeader() {
-		if err := s.waitAppliedIndex(); err != nil {
-			return nil, err
-		}
+		//if err := s.waitAppliedIndex(); err != nil {
+		//	return nil, err
+		//}
 		allocs, err := s.queueOperator.AllocationEnqueue(r)
 		if err != nil {
 			return nil, err
