@@ -27,6 +27,7 @@ import (
 	"yunli.com/jobpool/api/v2/constant"
 	"yunli.com/jobpool/api/v2/domain"
 	pb "yunli.com/jobpool/api/v2/etcdserverpb"
+	"yunli.com/jobpool/api/v2/helper/cronutil"
 	"yunli.com/jobpool/api/v2/helper/ulid"
 	"yunli.com/jobpool/api/v2/membershippb"
 	"yunli.com/jobpool/api/v2/schedulepb"
@@ -691,6 +692,14 @@ func (s *EtcdServer) PlanAdd(ctx context.Context, r *pb.SchedulePlanAddRequest) 
 	scheduleNameSpaceDetailRequest := &pb.ScheduleNameSpaceDetailRequest{
 		Name: r.Namespace,
 	}
+	// 校验cron是否正确
+	if r.Periodic != nil && r.Periodic.Spec != "" {
+		dtNow := time.Now()
+		_, err := cronutil.Next(r.Periodic.Spec, dtNow)
+		if err != nil {
+			return nil, domain.NewErr1010Format("Spec", r.Periodic.Spec)
+		}
+	}
 	_, err := s.raftRequest(ctx, pb.InternalRaftRequest{ScheduleNamespaceDetail: scheduleNameSpaceDetailRequest})
 	if err != nil {
 		return nil, err
@@ -709,6 +718,14 @@ func (s *EtcdServer) PlanAdd(ctx context.Context, r *pb.SchedulePlanAddRequest) 
 func (s *EtcdServer) PlanUpdate(ctx context.Context, r *pb.SchedulePlanUpdateRequest) (*pb.SchedulePlanUpdateResponse, error) {
 	scheduleNameSpaceDetailRequest := &pb.ScheduleNameSpaceDetailRequest{
 		Name: r.Namespace,
+	}
+	// 校验cron是否正确
+	if r.Periodic != nil && r.Periodic.Spec != "" {
+		dtNow := time.Now()
+		_, err := cronutil.Next(r.Periodic.Spec, dtNow)
+		if err != nil {
+			return nil, domain.NewErr1010Format("Spec", r.Periodic.Spec)
+		}
 	}
 	_, err := s.raftRequest(ctx, pb.InternalRaftRequest{ScheduleNamespaceDetail: scheduleNameSpaceDetailRequest})
 	if err != nil {
