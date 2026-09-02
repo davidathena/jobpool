@@ -473,21 +473,19 @@ func (c *CoreScheduler) jobOrphanGcInternal() error {
 	if resp.Data == nil || len(resp.Data) == 0 {
 		return nil
 	}
-	// EvalList 不支持按 job 集合过滤，全量取出后在内存中按 jobID 做关联判断
-	evalResp, err := c.srv.EvalList(c.srv.ctx, &etcdserverpb.ScheduleEvalListRequest{})
-	if err != nil {
-		return err
-	}
-	evalJobIDs := make(map[string]struct{})
-	if evalResp != nil {
-		for _, eval := range evalResp.Data {
-			if eval.JobId != "" {
-				evalJobIDs[eval.JobId] = struct{}{}
-			}
-		}
-	}
+	// 全量拉取 eval 可能达到百万级，这里改为按 job 逐个查询：
+	// pending 孤儿候选任务数量不多，逐 job 查询的开销远小于一次全量扫描的结果集
 	for _, jobPb := range resp.Data {
-		if _, ok := evalJobIDs[jobPb.Id]; ok {
+		evalResp, err := c.srv.EvalList(c.srv.ctx, &etcdserverpb.ScheduleEvalListRequest{
+			Namespace: jobPb.Namespace,
+			JobId:     jobPb.Id,
+		})
+		if err != nil {
+			c.logger.Error("orphan job GC failed to list evals of job, retry next round",
+				zap.String("job", jobPb.Id), zap.Error(err))
+			continue
+		}
+		if evalResp != nil && len(evalResp.Data) > 0 {
 			continue
 		}
 		if err := c.createOrphanJobEval(jobPb); err != nil {
