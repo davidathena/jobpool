@@ -32,5 +32,7 @@ api/vendor
 agent/vendor
 agent/agent
 doc/claude
+doc/k8s_yaml
 .omc
 CLAUDE.md
+AGENTS.md

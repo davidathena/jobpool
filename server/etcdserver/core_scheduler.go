@@ -16,16 +16,20 @@ import (
 	"fmt"
 	timestamppb "github.com/gogo/protobuf/types"
 	"go.uber.org/zap"
+	"strings"
 	"time"
 	"yunli.com/jobpool/api/v2/constant"
 	"yunli.com/jobpool/api/v2/domain"
 	"yunli.com/jobpool/api/v2/etcdserverpb"
+	"yunli.com/jobpool/api/v2/schedulepb"
+	ulid "yunli.com/jobpool/pkg/v2/ulid"
 	"yunli.com/jobpool/server/v2/scheduler"
 )
 
 const (
 	DefaultEvalGcHours               time.Duration = -168 * time.Hour
-	DefaultJobBlockGcHours           time.Duration = -48 * time.Hour
+	DefaultJobBlockGcHours           time.Duration = -24 * time.Hour
+	DefaultJobOrphanGcThreshold      time.Duration = -5 * time.Minute   // pending 超过5分钟仍无eval的孤儿任务需要补偿
 	TTLStrategySecondAfterCompletion time.Duration = -600 * time.Second // 10分钟后自动清理
 	TTLStrategySecondAfterFailure    time.Duration = -24 * time.Hour    // 24小时后自动清理
 )
@@ -191,6 +195,12 @@ func (c *CoreScheduler) jobGC() error {
 	if errJobBlocked != nil {
 		c.logger.Error("job long pending GC failed to update jobs",
 			zap.Error(errJobBlocked))
+	}
+	// 补偿没有eval的孤儿pending任务
+	errJobOrphan := c.jobOrphanGcInternal()
+	if errJobOrphan != nil {
+		c.logger.Error("job orphan GC failed to create evals",
+			zap.Error(errJobOrphan))
 	}
 	// 超过预设时间还没回收掉的走这里
 	// TODO 发现存在job中为pending但是eval中没记录的情况
@@ -412,7 +422,13 @@ func (c *CoreScheduler) allocLongPendingGCInternal() error {
 
 // jobBlockGcInternal 将待运行或运行时间过长的任务终结掉
 func (c *CoreScheduler) jobBlockGcInternal() error {
-	blockJobHoursAgo := time.Now().Add(DefaultJobBlockGcHours)
+	var blockJobThreshold time.Duration
+	if c.srv.Cfg.JobBlockGCThreshold > 0 {
+		blockJobThreshold = c.srv.Cfg.JobBlockGCThreshold
+	} else {
+		blockJobThreshold = -DefaultJobBlockGcHours
+	}
+	blockJobHoursAgo := time.Now().Add(blockJobThreshold * -1)
 	endTime, _ := timestamppb.TimestampProto(blockJobHoursAgo)
 	// 获取这个时间之前的job
 	resp, err := c.srv.JobList(c.srv.ctx, &etcdserverpb.ScheduleJobListRequest{
@@ -429,7 +445,7 @@ func (c *CoreScheduler) jobBlockGcInternal() error {
 		_, err := c.srv.JobUpdate(c.srv.ctx, &etcdserverpb.ScheduleJobStatusUpdateRequest{
 			Id:          job.Id,
 			Status:      constant.JobStatusFailed,
-			Description: fmt.Sprintf("任务%s运行时间超过%s自动停止", job.Id, DefaultJobBlockGcHours.String()),
+			Description: fmt.Sprintf("任务%s运行时间超过%s自动停止", job.Id, blockJobThreshold.String()),
 		})
 		if err != nil {
 			c.logger.Error("job GC failed to get update status of job", zap.String("job", job.Id), zap.Error(err))
@@ -437,4 +453,84 @@ func (c *CoreScheduler) jobBlockGcInternal() error {
 		}
 	}
 	return nil
+}
+
+// jobOrphanGcInternal 补偿没有任何关联 Evaluation 的孤儿 pending 任务
+// 崩溃若发生在 JobAdd 成功与 EvalAdd 之间（见 server_periodic.go 的 DispatchPlan），
+// 会产生永远没有 eval 的孤儿任务，这里周期扫描并为其补建 eval（走正常的 EvalAdd Raft 路径），
+// 补建失败时记日志，下一轮 GC 重试
+func (c *CoreScheduler) jobOrphanGcInternal() error {
+	orphanBefore := time.Now().Add(DefaultJobOrphanGcThreshold)
+	endTime, _ := timestamppb.TimestampProto(orphanBefore)
+	// 获取该时间之前创建且仍处于 pending 的任务
+	resp, err := c.srv.JobList(c.srv.ctx, &etcdserverpb.ScheduleJobListRequest{
+		EndTime: endTime,
+		Status:  constant.JobStatusPending,
+	})
+	if err != nil {
+		return err
+	}
+	if resp.Data == nil || len(resp.Data) == 0 {
+		return nil
+	}
+	// EvalList 不支持按 job 集合过滤，全量取出后在内存中按 jobID 做关联判断
+	evalResp, err := c.srv.EvalList(c.srv.ctx, &etcdserverpb.ScheduleEvalListRequest{})
+	if err != nil {
+		return err
+	}
+	evalJobIDs := make(map[string]struct{})
+	if evalResp != nil {
+		for _, eval := range evalResp.Data {
+			if eval.JobId != "" {
+				evalJobIDs[eval.JobId] = struct{}{}
+			}
+		}
+	}
+	for _, jobPb := range resp.Data {
+		if _, ok := evalJobIDs[jobPb.Id]; ok {
+			continue
+		}
+		if err := c.createOrphanJobEval(jobPb); err != nil {
+			c.logger.Error("orphan job GC failed to create eval, retry next round",
+				zap.String("job", jobPb.Id), zap.Error(err))
+			continue
+		}
+		c.logger.Info("orphan pending job compensated with a new eval",
+			zap.String("job", jobPb.Id))
+	}
+	return nil
+}
+
+// createOrphanJobEval 为孤儿任务补建 eval，创建方式与 DispatchPlan 中一致
+func (c *CoreScheduler) createOrphanJobEval(jobPb *schedulepb.Job) error {
+	planID := jobPb.DerivedPlanId
+	if planID == "" {
+		planID = jobPb.PlanId
+	}
+	// 周期计划的派生 ID 带有后缀，查询计划时需要去掉（与 dealWithJobDeregister 一致）
+	realPlanID := planID
+	if strings.Contains(realPlanID, constant.PeriodicLaunchSuffix) {
+		realPlanID = realPlanID[0:strings.Index(realPlanID, constant.PeriodicLaunchSuffix)]
+	}
+	// 取计划信息以补齐 eval 的优先级与类型
+	planResp, err := c.srv.PlanDetail(c.srv.ctx, &etcdserverpb.SchedulePlanDetailRequest{
+		Id:        realPlanID,
+		Namespace: jobPb.Namespace,
+	})
+	if err != nil || planResp == nil || planResp.Data == nil {
+		// 计划不存在时无法补建 eval，留待 jobBlockGcInternal 到期兜底终结
+		return fmt.Errorf("plan %q not found for orphan job %q", realPlanID, jobPb.Id)
+	}
+	plan := planResp.Data
+	_, err = c.srv.EvalAdd(c.srv.ctx, &etcdserverpb.ScheduleEvalAddRequest{
+		Id:          ulid.Generate(),
+		Namespace:   jobPb.Namespace,
+		Priority:    plan.Priority,
+		Type:        plan.Type,
+		TriggeredBy: constant.EvalTriggerPeriodicJob,
+		JobId:       jobPb.Id,
+		PlanId:      planID,
+		Status:      constant.EvalStatusPending,
+	})
+	return err
 }

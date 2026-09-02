@@ -173,12 +173,14 @@ type Config struct {
 	FailoverHeartbeatTTL    time.Duration
 	FailoverHeartbeatTTLCfg string `json:"failover-heartbeat-ttl"`
 	// GC相关
-	JobGCThreshold     time.Duration
-	EvalGCThreshold    time.Duration
-	NodeGCThreshold    time.Duration
-	JobGCThresholdCfg  string `json:"job-gc-threshold"`
-	EvalGCThresholdCfg string `json:"eval-gc-threshold"`
-	NodeGCThresholdCfg string `json:"node-gc-threshold"`
+	JobGCThreshold         time.Duration
+	EvalGCThreshold        time.Duration
+	NodeGCThreshold        time.Duration
+	JobBlockGCThreshold    time.Duration
+	JobGCThresholdCfg      string `json:"job-gc-threshold"`
+	EvalGCThresholdCfg     string `json:"eval-gc-threshold"`
+	NodeGCThresholdCfg     string `json:"node-gc-threshold"`
+	JobBlockGCThresholdCfg string `json:"job-block-gc-threshold"`
 
 	// InitialElectionTickAdvance is true, then local member fast-forwards
 	// election ticks to speed up "initial" leader election trigger. This
@@ -496,6 +498,7 @@ func NewConfig() *Config {
 		JobGCThresholdCfg:          "168h", // 7days
 		EvalGCThresholdCfg:         "168h", // 7days
 		NodeGCThresholdCfg:         "10m",
+		JobBlockGCThresholdCfg:     "24h", // 任务阻塞超过24小时自动标记失败
 
 		ListenPeerUrls:      []url.URL{*lpurl},
 		ListenClientUrls:    []url.URL{*lcurl},
@@ -679,6 +682,13 @@ func (cfg *configYAML) configFromFile(path string) error {
 		cfg.NodeGCThreshold, err = time.ParseDuration(cfg.NodeGCThresholdCfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "unexpected error setting up node-gc-threshold: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if cfg.JobBlockGCThresholdCfg != "" {
+		cfg.JobBlockGCThreshold, err = time.ParseDuration(cfg.JobBlockGCThresholdCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "unexpected error setting up job-block-gc-threshold: %v\n", err)
 			os.Exit(1)
 		}
 	}

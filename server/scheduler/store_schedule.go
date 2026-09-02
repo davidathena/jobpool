@@ -1108,8 +1108,10 @@ func (as *scheduleStore) EvalAdd(r *pb.ScheduleEvalAddRequest) (*pb.ScheduleEval
 		StatusDescription: r.StatusDescription,
 		Type:              r.Type,
 		Status:            r.Status,
-		CreateTime:        timestamppb.TimestampNow(),
-		UpdateTime:        timestamppb.TimestampNow(),
+		// 延迟语义随请求落库，leader 切换恢复时可据此进入延迟堆
+		WaitUntil:  r.WaitUntil,
+		CreateTime: timestamppb.TimestampNow(),
+		UpdateTime: timestamppb.TimestampNow(),
 	}
 	putEval(as.lg, tx, newEval)
 	as.commitRevision(tx)
@@ -1344,6 +1346,24 @@ func (as *scheduleStore) AllocationAdd(r *pb.ScheduleAllocationAddRequest) (*pb.
 	for _, item := range allocsToUpsert {
 		exist := getAlloc(as.lg, tx, item.Id)
 		if exist == nil {
+			// 新建运行分配前按 Job 幂等去重：同一 job 已存在非终态（pending/running）的
+			// allocation 时不再新建，直接幂等成功，防止 leader 切换时新旧 leader 并发提交
+			// 造成同一 job 重复分配（apply 层线性化执行，所有节点判定结果一致）。
+			// 仅针对正常运行分配（DesiredStatus 为空），skip/fail 等补偿分配不受影响；
+			// 心跳/状态更新走 AllocationUpdate，不经过此路径
+			if item.JobId != "" && item.DesiredStatus == "" {
+				existAllocs := getAllAllocs(as.lg, tx, &SchedulerFilter{
+					JobId:  item.JobId,
+					Status: fmt.Sprintf("%s,%s", constant.AllocClientStatusPending, constant.AllocClientStatusRunning),
+				})
+				if len(existAllocs) > 0 {
+					as.lg.Warn("skip duplicated allocation for job",
+						zap.String("job-id", item.JobId),
+						zap.String("alloc-id", item.Id),
+						zap.String("exist-alloc-id", existAllocs[0].Id))
+					continue
+				}
+			}
 			putAlloc(as.lg, tx, item)
 		} else {
 			exist.ClientStatus = item.ClientStatus

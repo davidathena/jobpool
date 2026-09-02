@@ -74,6 +74,8 @@ message Evaluation {
   string blocked_eval = 13;
   google.protobuf.Timestamp create_time = 14;
   google.protobuf.Timestamp update_time = 15;
+  bool wait = 16;
+  google.protobuf.Timestamp wait_until = 17;
 }
 
 message Allocation {

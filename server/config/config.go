@@ -206,9 +206,10 @@ type ServerConfig struct {
 	// 超过这个时间认为节点不可用
 	FailoverHeartbeatTTL time.Duration
 	// GC相关（包括node、evaluation、job）
-	JobGCThreshold  time.Duration
-	EvalGCThreshold time.Duration
-	NodeGCThreshold time.Duration
+	JobGCThreshold      time.Duration
+	EvalGCThreshold     time.Duration
+	NodeGCThreshold     time.Duration
+	JobBlockGCThreshold time.Duration
 }
 
 // VerifyBootstrap sanity-checks the initial config for bootstrap case

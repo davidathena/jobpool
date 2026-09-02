@@ -13,6 +13,7 @@
 package etcdserver
 
 import (
+	"time"
 	"yunli.com/jobpool/api/v2/domain"
 	"yunli.com/jobpool/api/v2/etcdserverpb"
 	"yunli.com/jobpool/api/v2/schedulepb"
@@ -22,7 +23,7 @@ func convertEvalFromRequest(r *etcdserverpb.ScheduleEvalAddRequest) *domain.Eval
 	if r == nil {
 		return &domain.Evaluation{}
 	}
-	return &domain.Evaluation{
+	data := &domain.Evaluation{
 		ID:          r.Id,
 		Namespace:   r.Namespace,
 		Priority:    int(r.Priority),
@@ -32,13 +33,18 @@ func convertEvalFromRequest(r *etcdserverpb.ScheduleEvalAddRequest) *domain.Eval
 		PlanID:      r.PlanId,
 		Status:      r.Status,
 	}
+	// 还原延迟语义：带 WaitUntil 的 eval 入队时会进入延迟堆而非立即 ready
+	if r.WaitUntil != nil {
+		data.WaitUntil = time.Unix(r.WaitUntil.Seconds, int64(r.WaitUntil.Nanos))
+	}
+	return data
 }
 
 func convertEvalFromEvalucation(r *schedulepb.Evaluation) *domain.Evaluation {
 	if r == nil {
 		return &domain.Evaluation{}
 	}
-	return &domain.Evaluation{
+	data := &domain.Evaluation{
 		ID:                r.Id,
 		Namespace:         r.Namespace,
 		Priority:          int(r.Priority),
@@ -53,4 +59,9 @@ func convertEvalFromEvalucation(r *schedulepb.Evaluation) *domain.Evaluation {
 		PreviousEval:      r.PreviousEval,
 		BlockedEval:       r.BlockedEval,
 	}
+	// 恢复延迟语义：带 WaitUntil 的 eval 入队时会进入延迟堆而非立即 ready
+	if r.WaitUntil != nil {
+		data.WaitUntil = time.Unix(r.WaitUntil.Seconds, int64(r.WaitUntil.Nanos))
+	}
+	return data
 }

@@ -14,6 +14,7 @@ package etcdserver
 
 import (
 	"fmt"
+	timestamppb "github.com/gogo/protobuf/types"
 	"go.uber.org/zap"
 	"math/rand"
 	"time"
@@ -176,6 +177,9 @@ func (s *EtcdServer) reapFailedEvaluations(stopCh chan struct{}) {
 						time.Duration(rand.Int63n(int64(5*time.Minute)))
 					followupEval := eval.CreateFailedFollowUpEval(followupEvalWait)
 					updateEval.NextEval = followupEval.ID
+					// 将 Wait 延迟时长换算为绝对触发时间随请求传递，
+					// 保证落库与 leader 切换恢复后仍保留延迟语义
+					waitUntil, _ := timestamppb.TimestampProto(followupEval.CreateTime.TimeValue().Add(followupEval.Wait))
 					// Update via Raft
 					_, followError := s.EvalAdd(s.ctx, &etcdserverpb.ScheduleEvalAddRequest{
 						Id:                followupEval.ID,
@@ -189,6 +193,7 @@ func (s *EtcdServer) reapFailedEvaluations(stopCh chan struct{}) {
 						Status:            followupEval.Status,
 						StatusDescription: followupEval.StatusDescription,
 						PreviousEval:      followupEval.PreviousEval,
+						WaitUntil:         waitUntil,
 					})
 					if followError != nil {
 						s.logger.Warn("eval create follow up failed",

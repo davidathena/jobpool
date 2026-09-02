@@ -120,13 +120,46 @@ func warnOfFailedRequest(lg *zap.Logger, now time.Time, reqStringer fmt.Stringer
 		resp = fmt.Sprintf("size:%d", proto.Size(respMsg))
 	}
 	d := time.Since(now)
-	lg.Warn(
-		"failed to apply request",
-		zap.Duration("took", d),
-		zap.String("request", reqStringer.String()),
-		zap.String("response", resp),
-		zap.Error(err),
-	)
+
+	// Distinguish between business errors and system errors
+	// Business errors (e.g., "not exist", "already exist") are normal operations
+	// and should be logged at debug level, while system errors remain at warn level
+	if isBusinessError(err) {
+		lg.Debug(
+			"business request failed",
+			zap.Duration("took", d),
+			zap.String("request", reqStringer.String()),
+			zap.String("response", resp),
+			zap.Error(err),
+		)
+	} else {
+		lg.Warn(
+			"failed to apply request",
+			zap.Duration("took", d),
+			zap.String("request", reqStringer.String()),
+			zap.String("response", resp),
+			zap.Error(err),
+		)
+	}
+}
+
+// isBusinessError checks if the error is a business-level error
+// (e.g., resource not found, already exists) which are expected
+// and should not trigger warning-level logs
+func isBusinessError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Business errors from domain package (ERROR_1100, ERROR_1101, etc.)
+	// These are normal business scenarios, not system failures
+	return strings.Contains(errStr, "不存在") ||
+		strings.Contains(errStr, "已经存在") ||
+		strings.Contains(errStr, "已被使用") ||
+		strings.Contains(errStr, "无法删除") ||
+		strings.Contains(errStr, "无法") ||
+		strings.Contains(errStr, "not exist") ||
+		strings.Contains(errStr, "already exists")
 }
 
 func warnOfExpensiveReadOnlyTxnRequest(lg *zap.Logger, warningApplyDuration time.Duration, now time.Time, r *pb.TxnRequest, txnResponse *pb.TxnResponse, err error) {

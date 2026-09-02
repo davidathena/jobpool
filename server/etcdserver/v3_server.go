@@ -1115,6 +1115,8 @@ func (s *EtcdServer) AllocationAdd(ctx context.Context, r *pb.ScheduleAllocation
 					JobId:       eval.JobId,
 					PlanId:      eval.PlanId,
 					Status:      eval.Status,
+					// 透传延迟语义，避免补建的 eval 丢失延迟触发时间
+					WaitUntil: eval.WaitUntil,
 				}
 				_, err = s.EvalAdd(ctx, evalRequest)
 				if err != nil {

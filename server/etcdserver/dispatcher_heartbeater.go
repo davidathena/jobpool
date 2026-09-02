@@ -105,7 +105,9 @@ func (h *dispatcherHeartbeater) invalidateHeartbeat(id string) {
 		return
 	}
 
-	h.logger.Warn("node TTL expired", zap.String("node_id", id))
+	// Node TTL expired is a normal business scenario (client offline, network issues)
+	// Log at info level instead of warn to reduce log noise
+	h.logger.Info("node TTL expired", zap.String("node_id", id))
 
 	canDisconnect, hasPendingReconnects := h.disconnectState(id)
 

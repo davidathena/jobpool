@@ -4946,6 +4946,10 @@
         },
         "type": {
           "type": "string"
+        },
+        "wait_until": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     },
@@ -5945,6 +5949,13 @@
           "type": "string"
         },
         "update_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "wait": {
+          "type": "boolean"
+        },
+        "wait_until": {
           "type": "string",
           "format": "date-time"
         }

@@ -305,6 +305,10 @@ func newConfig() *config {
 	// scheduler
 	fs.IntVar(&cfg.ec.JobParallelismLimit, "job-parallelism-limit", cfg.ec.JobParallelismLimit, "Allow run job size in one namespace (default is 100).")
 	fs.IntVar(&cfg.ec.WorkerNumber, "worker-number", cfg.ec.WorkerNumber, "The worker number for scheduler in server node (default is 3).")
+	fs.StringVar(&cfg.ec.JobGCThresholdCfg, "job-gc-threshold", cfg.ec.JobGCThresholdCfg, "Time duration after which completed jobs are garbage collected (e.g. '168h', '72h').")
+	fs.StringVar(&cfg.ec.EvalGCThresholdCfg, "eval-gc-threshold", cfg.ec.EvalGCThresholdCfg, "Time duration after which completed evaluations are garbage collected (e.g. '168h', '72h').")
+	fs.StringVar(&cfg.ec.NodeGCThresholdCfg, "node-gc-threshold", cfg.ec.NodeGCThresholdCfg, "Time duration after which down nodes are garbage collected (e.g. '10m', '30m').")
+	fs.StringVar(&cfg.ec.JobBlockGCThresholdCfg, "job-block-gc-threshold", cfg.ec.JobBlockGCThresholdCfg, "Time duration after which long-pending/running jobs are marked as failed (e.g. '24h', '48h').")
 
 	// unsafe
 	fs.BoolVar(&cfg.ec.UnsafeNoFsync, "unsafe-no-fsync", false, "Disables fsync, unsafe, will cause data loss.")

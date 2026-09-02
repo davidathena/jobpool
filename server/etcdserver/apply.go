@@ -1158,6 +1158,16 @@ func (a *applierV3backend) PlanDelete(r *pb.SchedulePlanDeleteRequest) (*pb.Sche
 	if resp != nil {
 		resp.Header = newHeader(a.s)
 	}
+	if err != nil {
+		return resp, err
+	}
+	// 删除 Plan 时同步从 leader 内存的周期派发堆中移除，
+	// 避免已删除的 running 周期 Plan 残留并继续派发。
+	// 非 leader 节点或未跟踪该 Plan 时 Remove 为空操作。
+	if rmErr := a.s.periodicDispatcher.Remove(r.Namespace, r.Id); rmErr != nil {
+		a.s.Logger().Error("remove plan from periodic error", zap.Error(rmErr))
+		return nil, rmErr
+	}
 	return resp, err
 }
 

@@ -1725,6 +1725,7 @@ message ScheduleEvalAddRequest {
   string status_description = 10;
   string previous_eval = 11;
   string eval_token = 12;
+  google.protobuf.Timestamp wait_until = 13;
 }
 
 message ScheduleEvalAddResponse {

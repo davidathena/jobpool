@@ -369,6 +369,11 @@ func (w *Worker) shouldResubmit(err error) bool {
 		return true
 	case strings.Contains(s, "PlanAllocation queue is disabled"):
 		return true
+	case strings.Contains(s, "PlanAllocation queue flushed"):
+		// leader 切换导致队列被 flush 时重试提交，
+		// 避免在途 eval 直接走失败/blocked 路径；
+		// 重复分配由 apply 层按 Job 幂等去重兜底。
+		return true
 	default:
 		return false
 	}

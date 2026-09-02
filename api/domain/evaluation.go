@@ -216,17 +216,29 @@ func ConvertEvaluation(eval *Evaluation) *schedulepb.Evaluation {
 		NextEval:          eval.NextEval,
 		PreviousEval:      eval.PreviousEval,
 		BlockedEval:       eval.BlockedEval,
+		// Wait 为已废弃的 duration 类型，落库时仅保留是否延迟的标记位，
+		// 实际的延迟触发时间以 WaitUntil 为准
+		Wait: eval.Wait > 0,
 	}
 	var create *timestamppb.Timestamp
 	var update *timestamppb.Timestamp
+	var waitUntil *timestamppb.Timestamp
 	if eval.CreateTime != "" {
 		create, _ = timestamppb.TimestampProto(eval.CreateTime.TimeValue())
 	}
 	if eval.UpdateTime != "" {
 		update, _ = timestamppb.TimestampProto(eval.UpdateTime.TimeValue().UTC())
 	}
+	if !eval.WaitUntil.IsZero() {
+		waitUntil, _ = timestamppb.TimestampProto(eval.WaitUntil.UTC())
+	} else if eval.Wait > 0 && eval.CreateTime != "" {
+		// 兼容只设置了 Wait 时长的延迟 eval（如失败重试的 follow-up eval），
+		// 以创建时间加延迟时长作为延迟触发时间落库，避免 leader 切换恢复后立即触发
+		waitUntil, _ = timestamppb.TimestampProto(eval.CreateTime.TimeValue().Add(eval.Wait).UTC())
+	}
 	data.CreateTime = create
 	data.UpdateTime = update
+	data.WaitUntil = waitUntil
 	return data
 }
 
@@ -252,5 +264,10 @@ func ConvertEvaluationFromPb(eval *schedulepb.Evaluation) *Evaluation {
 	if eval.UpdateTime != nil {
 		data.UpdateTime = xtime.NewFormatTime(time.Unix(eval.UpdateTime.Seconds, int64(eval.UpdateTime.Nanos)))
 	}
+	if eval.WaitUntil != nil {
+		data.WaitUntil = time.Unix(eval.WaitUntil.Seconds, int64(eval.WaitUntil.Nanos))
+	}
+	// proto 中 wait 为 bool 标记位，无法还原出原 duration，
+	// 恢复出的 eval.Wait 保持为 0，延迟语义以 WaitUntil 为准（broker 入队时据此进入延迟堆）
 	return data
 }

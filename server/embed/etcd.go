@@ -230,6 +230,7 @@ func StartEtcd(inCfg *Config) (e *Etcd, err error) {
 		JobGCThreshold:         cfg.JobGCThreshold,
 		EvalGCThreshold:        cfg.EvalGCThreshold,
 		NodeGCThreshold:        cfg.NodeGCThreshold,
+		JobBlockGCThreshold:    cfg.JobBlockGCThreshold,
 	}
 
 	if srvcfg.ExperimentalEnableDistributedTracing {
