@@ -1336,60 +1336,82 @@ func (s *EtcdServer) NodeUpdate(ctx context.Context, r *pb.NodeUpdateRequest, op
 	if err != nil {
 		return nil, err
 	}
-	// 将旧的eval绑定到node上的进行处理
-	var nodeNow *domain.Node
 	response := resp.(*pb.NodeUpdateResponse)
-	if response.Data != nil {
-		nodeNow = domain.ConvertNodeFromPb(response.Data)
-		if domain.ShouldDrainNode(r.Status) || nodeStatusTransitionRequiresEval(r.Status, nodeNow.Status) {
-			// create eval for new node ready and begin allocation plans
-			allocResp, err := s.AllocationList(ctx, &pb.ScheduleAllocationListRequest{
-				NodeId: r.ID,
-				Status: fmt.Sprintf("%s,%s", constant.AllocClientStatusPending, constant.AllocClientStatusRunning),
-			})
-			if err != nil {
-				return nil, err
-			}
-			if allocResp != nil && allocResp.Data != nil && len(allocResp.Data) > 0 {
-				planIDs := map[domain.NamespacedID]struct{}{}
-				for _, alloc := range allocResp.Data {
-					// 防止重复运行的map
-					allocation := domain.ConvertAllocation(alloc)
-					if _, ok := planIDs[allocation.PlanNamespacedID()]; ok {
-						continue
-					}
-					if !allocation.MigrateStatus() {
-						continue
-					}
-					planIDs[allocation.PlanNamespacedID()] = struct{}{}
-					planResp, err := s.PlanDetail(ctx, &pb.SchedulePlanDetailRequest{
-						Id:        alloc.PlanId,
-						Namespace: alloc.Namespace,
-					})
-					if err != nil {
-						return nil, err
-					}
-					// Create a new eval
-					eval := &pb.ScheduleEvalAddRequest{
-						Id:          ulid.Generate(),
-						Namespace:   allocation.Namespace,
-						Priority:    planResp.Data.Priority,
-						Type:        planResp.Data.Type,
-						TriggeredBy: constant.EvalTriggerNodeUpdate,
-						PlanId:      allocation.PlanID,
-						JobId:       allocation.JobId,
-						NodeId:      nodeNow.ID,
-						Status:      constant.EvalStatusPending,
-					}
-					_, err = s.EvalAdd(ctx, eval)
-					if err != nil {
-						return nil, err
-					}
-				}
-			}
-		}
+	// 节点 down 时，将其上可迁移的 allocation 标记 unknown 并创建迁移 eval，
+	// 由调度器把任务重新分配到健康节点。只在 down 时触发：
+	// disconnected 是宽限中间态（见 dispatcherHeartbeater.disconnectState），不做迁移，
+	// 避免网络抖动造成同一任务双节点并行执行
+	if r.Status == constant.NodeStatusDown && response.Data != nil {
+		s.createNodeMigrationEvals(ctx, r.ID)
 	}
-	return resp.(*pb.NodeUpdateResponse), nil
+	return response, nil
+}
+
+// createNodeMigrationEvals 为 down 节点上可迁移的 allocation 创建迁移 eval。
+// 先将旧 allocation 标记为 unknown（释放其对 job 的占用，否则 AllocationAdd 的
+// Job 幂等去重会阻止新建 allocation），再为对应 job 创建 pending eval。
+// 单个 allocation 失败只记日志不影响其余，迁移整体为尽力而为
+func (s *EtcdServer) createNodeMigrationEvals(ctx context.Context, nodeID string) {
+	allocResp, err := s.AllocationList(ctx, &pb.ScheduleAllocationListRequest{
+		NodeId: nodeID,
+		Status: fmt.Sprintf("%s,%s", constant.AllocClientStatusPending, constant.AllocClientStatusRunning),
+	})
+	if err != nil {
+		s.Logger().Error("list allocations of down node failed", zap.String("node", nodeID), zap.Error(err))
+		return
+	}
+	if allocResp == nil || len(allocResp.Data) == 0 {
+		return
+	}
+	planIDs := map[domain.NamespacedID]struct{}{}
+	for _, alloc := range allocResp.Data {
+		// 防止重复运行的map
+		allocation := domain.ConvertAllocation(alloc)
+		if _, ok := planIDs[allocation.PlanNamespacedID()]; ok {
+			continue
+		}
+		if !allocation.MigrateStatus() {
+			continue
+		}
+		planIDs[allocation.PlanNamespacedID()] = struct{}{}
+		planResp, err := s.PlanDetail(ctx, &pb.SchedulePlanDetailRequest{
+			Id:        alloc.PlanId,
+			Namespace: alloc.Namespace,
+		})
+		if err != nil || planResp == nil || planResp.Data == nil {
+			s.Logger().Error("get plan for node migration failed",
+				zap.String("node", nodeID), zap.String("plan", alloc.PlanId), zap.Error(err))
+			continue
+		}
+		if _, err := s.AllocationUpdate(ctx, &pb.ScheduleAllocationStatusUpdateRequest{
+			Id:          alloc.Id,
+			Status:      constant.AllocClientStatusUnknown,
+			Description: fmt.Sprintf("node %s down, migrate job %s to another node", nodeID, alloc.JobId),
+		}); err != nil {
+			s.Logger().Error("mark allocation of down node unknown failed",
+				zap.String("node", nodeID), zap.String("alloc", alloc.Id), zap.Error(err))
+			continue
+		}
+		// Create a new eval
+		eval := &pb.ScheduleEvalAddRequest{
+			Id:          ulid.Generate(),
+			Namespace:   allocation.Namespace,
+			Priority:    planResp.Data.Priority,
+			Type:        planResp.Data.Type,
+			TriggeredBy: constant.EvalTriggerNodeUpdate,
+			PlanId:      allocation.PlanID,
+			JobId:       allocation.JobId,
+			NodeId:      nodeID,
+			Status:      constant.EvalStatusPending,
+		}
+		if _, err := s.EvalAdd(ctx, eval); err != nil {
+			s.Logger().Error("create migration eval failed",
+				zap.String("node", nodeID), zap.String("job", alloc.JobId), zap.Error(err))
+			continue
+		}
+		s.Logger().Info("created migration eval for job on down node",
+			zap.String("node", nodeID), zap.String("job", alloc.JobId))
+	}
 }
 
 func (s *EtcdServer) NodeDelete(ctx context.Context, r *pb.NodeDeleteRequest, opts ...grpc.CallOption) (*pb.NodeDeleteResponse, error) {

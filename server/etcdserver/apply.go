@@ -1516,9 +1516,8 @@ func (a *applierV3backend) NodeUpdate(r *pb.NodeUpdateRequest) (*pb.NodeUpdateRe
 	var ttl time.Duration
 	switch r.Status {
 	case constant.NodeStatusDown:
-		// Determine if there are any Vault accessors on the node to cleanup
-		a.s.Logger().Debug("TODO when node down delete the service and other")
-		a.s.Logger().Debug("需要解注册一些内容")
+		// 节点 down 后的任务迁移在 server 层处理（见 EtcdServer.createNodeMigrationEvals）。
+		// apply 层会在每个节点上执行，不能在此创建 eval，否则各节点生成不同 ID 导致状态分叉
 	case constant.NodeStatusReady:
 		a.s.blockedEvals.Unblock(r.ID, 0)
 		ttl, _ = a.s.dispatcherHeartbeater.resetHeartbeatTimer(r.ID)
@@ -1528,84 +1527,7 @@ func (a *applierV3backend) NodeUpdate(r *pb.NodeUpdateRequest) (*pb.NodeUpdateRe
 	if ttl != 0 && resp != nil {
 		resp.HeartbeatTtl = ttl.Milliseconds()
 	}
-	//if err := a.EvalWithNodeChange(r, resp); err != nil {
-	//	a.s.Logger().Warn("eval with node change error", zap.Error(err))
-	//	return nil, err
-	//}
-	// // at last check the status of node
-	//	if domain.ShouldDrainNode(r.Status) || nodeStatusTransitionRequiresEval(r.Status, updatedNode.Status) {
-	//		// create eval for new node ready and begin allocation plans
-	//		_, err := as.createNodeEvals(r.ID)
-	//		if err != nil {
-	//			as.lg.Error("eval creation failed", zap.Error(err))
-	//			return nil, err
-	//		}
-	//	}
 	return resp, err
-}
-
-// TODO 将本方法迁移到server逻辑中
-func (a *applierV3backend) EvalWithNodeChange(r *pb.NodeUpdateRequest, resp *pb.NodeUpdateResponse) error {
-	var nodeNow *domain.Node
-	if resp.Data != nil {
-		nodeNow = domain.ConvertNodeFromPb(resp.Data)
-		if domain.ShouldDrainNode(r.Status) || nodeStatusTransitionRequiresEval(r.Status, nodeNow.Status) {
-			// create eval for new node ready and begin allocation plans
-			allocResp, err := a.AllocationList(&pb.ScheduleAllocationListRequest{
-				NodeId: r.ID,
-				Status: fmt.Sprintf("%s,%s", constant.AllocClientStatusPending, constant.AllocClientStatusRunning),
-			})
-			if err != nil {
-				return err
-			}
-			if allocResp != nil && allocResp.Data != nil && len(allocResp.Data) > 0 {
-				planIDs := map[domain.NamespacedID]struct{}{}
-				for _, alloc := range allocResp.Data {
-					// 防止重复运行的map
-					allocation := domain.ConvertAllocation(alloc)
-					if _, ok := planIDs[allocation.PlanNamespacedID()]; ok {
-						continue
-					}
-					if !allocation.MigrateStatus() {
-						continue
-					}
-					planIDs[allocation.PlanNamespacedID()] = struct{}{}
-					planResp, err := a.PlanDetail(&pb.SchedulePlanDetailRequest{
-						Id:        alloc.PlanId,
-						Namespace: alloc.Namespace,
-					})
-					if err != nil {
-						return err
-					}
-					// Create a new eval
-					eval := &pb.ScheduleEvalAddRequest{
-						Id:          ulid.Generate(),
-						Namespace:   allocation.Namespace,
-						Priority:    planResp.Data.Priority,
-						Type:        planResp.Data.Type,
-						TriggeredBy: constant.EvalTriggerNodeUpdate,
-						PlanId:      allocation.PlanID,
-						JobId:       allocation.JobId,
-						NodeId:      nodeNow.ID,
-						Status:      constant.EvalStatusPending,
-					}
-					_, err = a.EvalAdd(eval)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func nodeStatusTransitionRequiresEval(newStatus, oldStatus string) bool {
-	initToReady := oldStatus == constant.NodeStatusInit && newStatus == constant.NodeStatusReady
-	terminalToReady := oldStatus == constant.NodeStatusDown && newStatus == constant.NodeStatusReady
-	disconnectedToOther := oldStatus == constant.NodeStatusDisconnected && newStatus != constant.NodeStatusDisconnected
-	otherToDisconnected := oldStatus != constant.NodeStatusDisconnected && newStatus == constant.NodeStatusDisconnected
-	return initToReady || terminalToReady || disconnectedToOther || otherToDisconnected
 }
 
 func (a *applierV3backend) NodeDelete(r *pb.NodeDeleteRequest) (*pb.NodeDeleteResponse, error) {

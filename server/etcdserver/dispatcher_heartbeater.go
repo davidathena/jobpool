@@ -139,8 +139,14 @@ func (h *dispatcherHeartbeater) disconnectState(id string) (bool, bool) {
 	if node.Status == constant.NodeStatusDown || node.Status == constant.NodeStatusInit {
 		return false, false
 	}
-	// TODO 该节点上所有的allocation超过10分钟还没跑，则返回true, true
-	return true, false
+	// 已处于 disconnected 的节点说明宽限期内（一个心跳 TTL）仍未恢复心跳，判定为 down，
+	// 由 server 层 NodeUpdate 触发任务迁移
+	if node.Status == constant.NodeStatusDisconnected {
+		return true, false
+	}
+	// ready 节点首次心跳超时先进入 disconnected 宽限态（NodeUpdate 会为其重建心跳定时器），
+	// 避免网络抖动直接判 down 触发任务迁移，造成同一任务双节点并行执行
+	return true, true
 }
 
 func (h *dispatcherHeartbeater) resetHeartbeatTimer(id string) (time.Duration, error) {
